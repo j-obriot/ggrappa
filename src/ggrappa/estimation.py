@@ -2,7 +2,7 @@ import torch
 import logging
 
 from . import GRAPPAReconSpec
-from .utils import pinv, get_src_tgs_blocks
+from .utils import pinv, get_src_tgs_blocks, complex_matmul as cmm
 
 logger = logger = logging.getLogger(__name__)
 
@@ -77,10 +77,12 @@ def estimate_grappa_kernel(acs,
     src = src.permute(1,0,-1).reshape(-1, nc*nsp)
     tgs = tgs.permute(1,0,-1).reshape(-1, nc*idxs_tgs.sum())
 
-    src = src.cuda() if cuda and cuda_mode in ["all", "estimation"] else src
-    tgs = tgs.cuda() if cuda and cuda_mode in ["all", "estimation"] else tgs
+    src = src.to('mps') if cuda and cuda_mode in ["all", "estimation"] else src
+    tgs = tgs.to('mps') if cuda and cuda_mode in ["all", "estimation"] else tgs
 
-    grappa_kernel = pinv(src, lambda_) @ src.H @ tgs
+    grappa_kernel = cmm(cmm(pinv(src, lambda_), src.H), tgs)
+
+    grappa_kernel = grappa_kernel.cpu() if cuda_mode != 'all' else grappa_kernel
 
     return GRAPPAReconSpec(weights=grappa_kernel,
                            af=af,

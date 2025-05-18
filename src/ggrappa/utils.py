@@ -223,8 +223,8 @@ def extract_sampled_regions(sig, acs_only=True):
     
 
 def pinv_batch(M, lambda_=1e-4, cuda=True):
-    if cuda: M = M.cuda()
-    MM = M.H @ M
+    if cuda: M = M.to('mps')
+    MM = complex_matmul(M.H, M)
     del M
     #torch.cuda.empty_cache()
 
@@ -241,20 +241,20 @@ def pinv_batch(M, lambda_=1e-4, cuda=True):
 
 def pinv(M, lambda_=1e-4):
     if M.shape[0] > M.shape[1]:
-        MM = M.H @ M
+        MM = complex_matmul(M.H, M)
         finalTranspose = False
     else:
-        MM = M @ M.H
+        MM = complex_matmul(M, M.H)
         finalTranspose = True
-    S = torch.linalg.eigvalsh(MM)[-1].item()
+    S = torch.linalg.eigvalsh(MM.cpu())[-1].item()
     regularizer = (lambda_**2) * abs(S) * torch.eye(MM.shape[0], device=M.device)
-    reg_pinv = torch.linalg.pinv(MM + regularizer)
+    reg_pinv = torch.linalg.pinv((MM + regularizer).cpu()).to(M.device)
     return reg_pinv.H if finalTranspose else reg_pinv
 
 
 def pinv_linalg_batch(A, lamdba_=1e-4, cuda=True):
-    if cuda: A = A.cuda()
-    AA = A.H@A
+    if cuda: A = A.to('mps')
+    AA = complex_matmul(A.H, A)
     del A
     #torch.cuda.empty_cache()
     S = torch.linalg.eigvalsh(AA)[-1].item() # Largest eigenvalue
@@ -273,9 +273,9 @@ def pinv_linalg_batch(A, lamdba_=1e-4, cuda=True):
 def pinv_linalg(A, lamdba_=1e-4):
     m,n = A.shape
     if n > m:
-        AA = A@A.H
+        AA = complex_matmul(A, A.H)
     else:
-        AA = A.H@A
+        AA = complex_matmul(A.H, A)
     S = torch.linalg.eigvalsh(AA)[-1].item()
     lambda_sq = (lamdba_**2) * abs(S)
 
@@ -284,3 +284,10 @@ def pinv_linalg(A, lamdba_=1e-4):
     regularized_matrix = AA + I * lambda_sq
 
     return torch.linalg.solve(regularized_matrix, A.H)
+
+def complex_matmul(a, b):
+    if a.device.type != 'mps':
+        return a @ b
+    else:
+        # complex matmul in mps doesn't work ??
+        return (a.real @ b.real) - (a.imag @ b.imag) + 1j * ((a.real @ b.imag) + (a.imag @ b.real))

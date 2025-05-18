@@ -7,7 +7,7 @@ import numpy as np
 import warnings
 
 from . import GRAPPAReconSpec
-from .utils import extract_sampled_regions, get_indices_from_mask, pad_back_to_size
+from .utils import extract_sampled_regions, get_indices_from_mask, pad_back_to_size, complex_matmul as cmm
 
 logger = logger = logging.getLogger(__name__)
 
@@ -25,7 +25,7 @@ def apply_grappa_kernel(sig,
                         dtype=torch.complex64,
 ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
 
-    grappa_kernel = grappa_recon_spec.weights.cuda() if cuda and cuda_mode in ["all", "application"] else grappa_recon_spec.weights
+    grappa_kernel = grappa_recon_spec.weights.to('mps') if cuda and cuda_mode in ["all", "application"] else grappa_recon_spec.weights.cpu()
     ypos, zpos, xpos = grappa_recon_spec.pos
     tbly, tblz, tblx = grappa_recon_spec.tbl
     sbly, sblz, sblx = grappa_recon_spec.sbl
@@ -94,7 +94,7 @@ def apply_grappa_kernel(sig,
     idxs_src = idxs_src.flatten()
     for y in tqdm(y_ival, disable=quiet):
         sig_y = sig[:,y:y+size_chunk_y]
-        sig_y = sig_y.cuda() if cuda and cuda_mode in ["all", "application"] else sig_y
+        sig_y = sig_y.to('mps') if cuda and cuda_mode in ["all", "application"] else sig_y
         zival = cnt + z_ival
         for z in zival:
             blocks = sig_y[:,:, z:z+sblz, :].unfold(dimension=1, size=sbly, step=tbly).unfold(dimension=3, size=sblx, step=tblx)
@@ -111,10 +111,10 @@ def apply_grappa_kernel(sig,
                 res = torch.zeros((cur_batch_sz_y, cur_batch_sz_x, nc, tbly, tblz, tblx), dtype=blocks.dtype, device=blocks.device)
                 blocks = blocks[locs_fully_sampled[0], locs_fully_sampled[1]]
                 blocks = blocks.reshape(blocks.shape[0], -1)
-                res[locs_fully_sampled[0], locs_fully_sampled[1]] = (blocks @ grappa_kernel).reshape(len(locs_fully_sampled[0]), nc, tbly, tblz, tblx)
+                res[locs_fully_sampled[0], locs_fully_sampled[1]] = cmm(blocks, grappa_kernel).reshape(len(locs_fully_sampled[0]), nc, tbly, tblz, tblx)
             else:
                 blocks = blocks.reshape(cur_batch_sz_y*cur_batch_sz_x, -1)
-                res = (blocks @ grappa_kernel).reshape(cur_batch_sz_y, cur_batch_sz_x, nc, tbly, tblz, tblx)
+                res = cmm(blocks, grappa_kernel).reshape(cur_batch_sz_y, cur_batch_sz_x, nc, tbly, tblz, tblx)
             
             rec[:,  y+ypos:y+ypos+tbly*cur_batch_sz_y,
                     z+zpos:z+zpos+tblz,
